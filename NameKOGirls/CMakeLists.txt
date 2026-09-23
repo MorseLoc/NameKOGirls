@@ -1,12 +1,20 @@
-﻿# CMakeList.txt : CMake project for NameKOGirls, include source and define
-# project specific logic here.
-#
+﻿add_executable(NameKOGirls
+    "NameKOGirls.cpp"
+    "NameKOGirls.h"
+    "CharacterSelectScreen.h"
+)
 
-# Add source to this project's executable.
-add_executable (NameKOGirls "NameKOGirls.cpp" "NameKOGirls.h")
+target_link_libraries(NameKOGirls PRIVATE
+    glfw
+    OpenGL::GL
+    nameko_image
+)
 
-if (CMAKE_VERSION VERSION_GREATER 3.12)
-  set_property(TARGET NameKOGirls PROPERTY CXX_STANDARD 20)
+# Lets the game find images regardless of the launch directory.
+target_compile_definitions(NameKOGirls PRIVATE
+    NAMEKO_ASSET_DIR="${CMAKE_CURRENT_SOURCE_DIR}/assets"
+)
+
+if(MSVC)
+    target_compile_options(NameKOGirls PRIVATE /W4 /utf-8)
 endif()
-
-# TODO: Add tests and install targets if needed.
