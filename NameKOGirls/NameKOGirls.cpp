@@ -6,6 +6,7 @@
 #undef STB_IMAGE_IMPLEMENTATION
 
 #include "CharacterSelectScreen.h"
+#include "FightArena.h"
 
 #include <algorithm>
 #include <array>
@@ -28,7 +29,8 @@ enum class Screen
     Title,
     CharacterSelect,
     FightPlaceholder,
-    EditorPlaceholder
+    EditorPlaceholder,
+    Fight
 };
 
 struct AppState
@@ -38,12 +40,14 @@ struct AppState
     bool mouseWasDown = false;
 
     CharacterSelectScreen characterSelect;
+    FightArena fightArena;
 };
 
 struct ProgramState
 {
     WindowState window;
     AppState app;
+    FightArena fightArena;
 };
 
 struct Button
@@ -154,10 +158,18 @@ static void OnKey(
 
     if (key == GLFW_KEY_ESCAPE)
     {
-        if (app.screen == Screen::Title)
+        if (app.screen == Screen::Fight)
+        {
+            app.fightArena.TogglePause();
+        }
+        else if (app.screen == Screen::Title)
+        {
             glfwSetWindowShouldClose(window, GLFW_TRUE);
+        }
         else
+        {
             app.screen = Screen::Title;
+        }
 
         return;
     }
@@ -576,7 +588,26 @@ int main()
                     << (player2.isNPC ? " (NPC)" : " (Human)")
                     << '\n';
 
-                app.screen = Screen::FightPlaceholder;
+                if (app.fightArena.Enter(
+                    std::string(NAMEKO_ASSET_DIR) + "/Stages"))
+                {
+                    app.screen = Screen::Fight;
+                }
+            }
+        }
+
+        else if (app.screen == Screen::Fight)
+        {
+            const FightArena::Action action = app.fightArena.Update(
+                designMouseX,
+                designMouseY,
+                mouseDown);
+
+            app.fightArena.Draw(DrawText);
+
+            if (action == FightArena::Action::ExitToCharacterSelect)
+            {
+                app.screen = Screen::CharacterSelect;
             }
         }
 
@@ -646,6 +677,7 @@ int main()
         glfwSwapBuffers(window);
     }
 
+    state.app.fightArena.Release();
     state.app.characterSelect.Release();
 
     glDeleteTextures(1, &texture);
