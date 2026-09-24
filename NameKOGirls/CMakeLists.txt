@@ -3,6 +3,7 @@
     "NameKOGirls.h"
     "CharacterSelectScreen.h"
     "FightArena.h"
+    "Character.h"
 )
 
 target_link_libraries(NameKOGirls PRIVATE

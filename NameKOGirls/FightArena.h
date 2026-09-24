@@ -11,6 +11,8 @@
 #include <string>
 #include <vector>
 
+#include "Character.h"
+
 class FightArena
 {
 public:
@@ -85,6 +87,30 @@ public:
         {
             if (LoadStage(image.string()))
             {
+                const std::string idlePath =
+                    (std::filesystem::path(folderPath).parent_path()
+                        / "Characters" / "Funghi" / "Idle.png").string();
+
+                if (!player1.LoadIdle(idlePath) ||
+                    !player2.LoadIdle(idlePath))
+                {
+                    std::cerr << "Could not load Funghi's idle animation.\n";
+                    player1.Release();
+                    player2.Release();
+                    return false;
+                }
+
+                // Positions use the arena's 1280 x 720 coordinate system.
+                constexpr float groundY = 490.0f;
+
+                player1.Spawn(400.0f, groundY);
+                player2.Spawn(880.0f, groundY);
+
+                player1.FaceOpponent(player2);
+                player2.FaceOpponent(player1);
+
+                lastUpdateTime = glfwGetTime();
+
                 paused = false;
                 mouseWasDown = true;
                 cursorX = -1.0f;
@@ -100,9 +126,10 @@ public:
     void TogglePause()
     {
         paused = !paused;
-
-        // Require a fresh click after opening or closing the menu.
         mouseWasDown = true;
+
+        // Prevent time spent paused from advancing the animation.
+        lastUpdateTime = glfwGetTime();
     }
 
     bool IsPaused() const
@@ -112,6 +139,21 @@ public:
 
     Action Update(float mouseX, float mouseY, bool mouseDown)
     {
+        const double now = glfwGetTime();
+        const double deltaTime = std::clamp(
+            now - lastUpdateTime, 0.0, 0.1);
+
+        lastUpdateTime = now;
+
+        if (!paused)
+        {
+            player1.FaceOpponent(player2);
+            player2.FaceOpponent(player1);
+
+            player1.Update(deltaTime);
+            player2.Update(deltaTime);
+        }
+
         cursorX = mouseX;
         cursorY = mouseY;
 
@@ -175,6 +217,9 @@ public:
             glDisable(GL_TEXTURE_2D);
         }
 
+        player1.Draw();
+        player2.Draw();
+
         if (!paused)
             return;
 
@@ -191,6 +236,9 @@ public:
     // Call while the OpenGL window still exists.
     void Release()
     {
+        player1.Release();
+        player2.Release();
+
         if (stageTexture != 0)
         {
             glDeleteTextures(1, &stageTexture);
@@ -199,6 +247,12 @@ public:
     }
 
 private:
+
+    Character player1;
+    Character player2;
+
+    double lastUpdateTime = 0.0;
+
     struct Rect
     {
         float x, y, width, height;
