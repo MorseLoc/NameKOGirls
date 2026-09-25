@@ -103,8 +103,8 @@ public:
                 // Positions use the arena's 1280 x 720 coordinate system.
                 constexpr float groundY = 490.0f;
 
-                player1.Spawn(400.0f, groundY);
-                player2.Spawn(880.0f, groundY);
+                player1.Spawn(250.0f, groundY);
+                player2.Spawn(1030.0f, groundY);
 
                 player1.FaceOpponent(player2);
                 player2.FaceOpponent(player1);
