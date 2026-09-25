@@ -1,5 +1,7 @@
 #pragma once
 
+#include "FightMatch.h"
+
 #include <GLFW/glfw3.h>
 #include <stb_image.h>
 
@@ -10,8 +12,6 @@
 #include <random>
 #include <string>
 #include <vector>
-
-#include "Character.h"
 
 class FightArena
 {
@@ -24,7 +24,8 @@ public:
 
     // Uses the existing DrawText function in NameKOGirls.cpp.
     using TextRenderer = void (*)(
-        const char*, float, float, float,
+        const char*,
+        float, float, float,
         float, float, float);
 
     FightArena() = default;
@@ -32,7 +33,11 @@ public:
     FightArena(const FightArena&) = delete;
     FightArena& operator=(const FightArena&) = delete;
 
-    bool Enter(const std::string& folderPath)
+    bool Enter(
+        const std::string& folderPath,
+        GLFWwindow* window,
+        bool npc1 = false,
+        bool npc2 = false)
     {
         std::vector<std::filesystem::path> images;
 
@@ -44,7 +49,8 @@ public:
                 if (!entry.is_regular_file())
                     continue;
 
-                std::string extension = entry.path().extension().string();
+                std::string extension =
+                    entry.path().extension().string();
 
                 std::transform(
                     extension.begin(),
@@ -67,68 +73,76 @@ public:
         }
         catch (const std::filesystem::filesystem_error& error)
         {
-            std::cerr << "Could not read Stages folder: "
+            std::cerr
+                << "Could not read Stages folder: "
                 << error.what() << '\n';
+
             return false;
         }
 
         if (images.empty())
         {
-            std::cerr << "No supported images in: "
+            std::cerr
+                << "No supported images in: "
                 << folderPath << '\n';
+
             return false;
         }
 
-        // Shuffle so the first usable image is chosen randomly.
-        // A damaged image will not stop other stages from loading.
-        std::shuffle(images.begin(), images.end(), randomEngine);
+        // Try images in random order so a damaged image does not
+        // prevent another usable stage from loading.
+        std::shuffle(
+            images.begin(),
+            images.end(),
+            randomEngine);
 
         for (const auto& image : images)
         {
-            if (LoadStage(image.string()))
+            if (!LoadStage(image.string()))
+                continue;
+
+            const std::string idlePath =
+                (std::filesystem::path(folderPath).parent_path()
+                    / "Characters"
+                    / "Funghi"
+                    / "Idle.png").string();
+
+            if (!match.Start(idlePath, window, npc1, npc2))
             {
-                const std::string idlePath =
-                    (std::filesystem::path(folderPath).parent_path()
-                        / "Characters" / "Funghi" / "Idle.png").string();
+                std::cerr
+                    << "Could not load Funghi's idle animation.\n";
 
-                if (!player1.LoadIdle(idlePath) ||
-                    !player2.LoadIdle(idlePath))
-                {
-                    std::cerr << "Could not load Funghi's idle animation.\n";
-                    player1.Release();
-                    player2.Release();
-                    return false;
-                }
-
-                // Positions use the arena's 1280 x 720 coordinate system.
-                constexpr float groundY = 490.0f;
-
-                player1.Spawn(250.0f, groundY);
-                player2.Spawn(1030.0f, groundY);
-
-                player1.FaceOpponent(player2);
-                player2.FaceOpponent(player1);
-
-                lastUpdateTime = glfwGetTime();
-
-                paused = false;
-                mouseWasDown = true;
-                cursorX = -1.0f;
-                cursorY = -1.0f;
-                return true;
+                Release();
+                return false;
             }
+
+            selectedPauseButton = 0;
+            lastUpdateTime = glfwGetTime();
+
+            paused = false;
+            mouseWasDown = true;
+
+            cursorX = -1.0f;
+            cursorY = -1.0f;
+
+            return true;
         }
 
-        std::cerr << "None of the stage images could be loaded.\n";
+        std::cerr
+            << "None of the stage images could be loaded.\n";
+
         return false;
     }
 
     void TogglePause()
     {
         paused = !paused;
+        selectedPauseButton = 0;
+
+        match.Sync();
         mouseWasDown = true;
 
-        // Prevent time spent paused from advancing the animation.
+        // Prevent time spent paused from advancing the match.
         lastUpdateTime = glfwGetTime();
     }
 
@@ -140,19 +154,24 @@ public:
     Action Update(float mouseX, float mouseY, bool mouseDown)
     {
         const double now = glfwGetTime();
+
         const double deltaTime = std::clamp(
-            now - lastUpdateTime, 0.0, 0.1);
+            now - lastUpdateTime,
+            0.0,
+            0.1);
 
         lastUpdateTime = now;
 
-        if (!paused)
-        {
-            player1.FaceOpponent(player2);
-            player2.FaceOpponent(player1);
+        const auto menu = match.Poll();
 
-            player1.Update(deltaTime);
-            player2.Update(deltaTime);
-        }
+        if (menu.pause)
+            TogglePause();
+
+        if (menu.debug)
+            match.debug = !match.debug;
+
+        if (menu.restart && !paused)
+            match.Restart();
 
         cursorX = mouseX;
         cursorY = mouseY;
@@ -160,20 +179,43 @@ public:
         const bool clicked = mouseDown && !mouseWasDown;
         mouseWasDown = mouseDown;
 
-        if (!paused || !clicked)
-            return Action::None;
-
-        if (continueButton.Contains(mouseX, mouseY))
+        if (paused)
         {
-            paused = false;
-            return Action::None;
+            if (menu.up || menu.down)
+                selectedPauseButton = 1 - selectedPauseButton;
+
+            const bool clickedContinue =
+                clicked && continueButton.Contains(mouseX, mouseY);
+
+            const bool confirmedContinue =
+                menu.confirm && selectedPauseButton == 0;
+
+            if (menu.back || clickedContinue || confirmedContinue)
+            {
+                TogglePause();
+
+                // Consume the menu input before combat resumes.
+                match.Update(0, true);
+
+                return Action::None;
+            }
+
+            const bool clickedExit =
+                clicked && exitButton.Contains(mouseX, mouseY);
+
+            const bool confirmedExit =
+                menu.confirm && selectedPauseButton == 1;
+
+            if (clickedExit || confirmedExit)
+            {
+                paused = false;
+                match.Sync();
+
+                return Action::ExitToCharacterSelect;
+            }
         }
 
-        if (exitButton.Contains(mouseX, mouseY))
-        {
-            paused = false;
-            return Action::ExitToCharacterSelect;
-        }
+        match.Update(deltaTime, paused);
 
         return Action::None;
     }
@@ -181,26 +223,30 @@ public:
     void Draw(TextRenderer drawText) const
     {
         glDisable(GL_TEXTURE_2D);
+
         glColor4f(0.02f, 0.02f, 0.03f, 1.0f);
         Fill({ 0, 0, WIDTH, HEIGHT });
 
         if (stageTexture != 0)
         {
-            // Fit the image without stretching it.
+            // Fit the stage image without stretching it.
             const float scale = std::min(
                 WIDTH / static_cast<float>(imageWidth),
                 HEIGHT / static_cast<float>(imageHeight));
 
             const float width = imageWidth * scale;
             const float height = imageHeight * scale;
+
             const float x = (WIDTH - width) * 0.5f;
             const float y = (HEIGHT - height) * 0.5f;
 
             glEnable(GL_TEXTURE_2D);
             glBindTexture(GL_TEXTURE_2D, stageTexture);
+
             glColor4f(1, 1, 1, 1);
 
             glBegin(GL_QUADS);
+
             glTexCoord2f(0, 0);
             glVertex2f(x, y);
 
@@ -212,13 +258,13 @@ public:
 
             glTexCoord2f(0, 1);
             glVertex2f(x, y + height);
+
             glEnd();
 
             glDisable(GL_TEXTURE_2D);
         }
 
-        player1.Draw();
-        player2.Draw();
+        match.Draw();
 
         if (!paused)
             return;
@@ -236,8 +282,7 @@ public:
     // Call while the OpenGL window still exists.
     void Release()
     {
-        player1.Release();
-        player2.Release();
+        match.Release();
 
         if (stageTexture != 0)
         {
@@ -247,27 +292,33 @@ public:
     }
 
 private:
-
-    Character player1;
-    Character player2;
-
-    double lastUpdateTime = 0.0;
-
     struct Rect
     {
-        float x, y, width, height;
+        float x;
+        float y;
+        float width;
+        float height;
 
         bool Contains(float px, float py) const
         {
-            return px >= x && px < x + width &&
-                py >= y && py < y + height;
+            return
+                px >= x &&
+                px < x + width &&
+                py >= y &&
+                py < y + height;
         }
     };
 
     static constexpr float WIDTH = 1280.0f;
     static constexpr float HEIGHT = 720.0f;
 
+    FightMatch match;
+
+    int selectedPauseButton = 0;
+    double lastUpdateTime = 0.0;
+
     GLuint stageTexture = 0;
+
     int imageWidth = 0;
     int imageHeight = 0;
 
@@ -301,44 +352,63 @@ private:
         {
             const char* reason = stbi_failure_reason();
 
-            std::cerr << "Could not load stage: " << path
-                << " (" << (reason ? reason : "unknown error")
+            std::cerr
+                << "Could not load stage: "
+                << path
+                << " ("
+                << (reason ? reason : "unknown error")
                 << ")\n";
+
             return false;
         }
 
         GLint maxTextureSize = 0;
         glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxTextureSize);
 
-        if (width <= 0 || height <= 0 ||
-            width > maxTextureSize || height > maxTextureSize)
+        if (width <= 0 ||
+            height <= 0 ||
+            width > maxTextureSize ||
+            height > maxTextureSize)
         {
-            std::cerr << "Unsupported stage dimensions: "
+            std::cerr
+                << "Unsupported stage dimensions: "
                 << path << '\n';
+
             stbi_image_free(pixels);
             return false;
         }
 
-        // Clear earlier GL errors before checking this upload.
+        // Clear earlier errors before checking this upload.
         while (glGetError() != GL_NO_ERROR)
         {
         }
 
         GLuint newTexture = 0;
+
         glGenTextures(1, &newTexture);
         glBindTexture(GL_TEXTURE_2D, newTexture);
 
         glTexParameteri(
-            GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            GL_TEXTURE_2D,
+            GL_TEXTURE_MIN_FILTER,
+            GL_LINEAR);
+
         glTexParameteri(
-            GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            GL_TEXTURE_2D,
+            GL_TEXTURE_MAG_FILTER,
+            GL_LINEAR);
 
         constexpr GLint clampToEdge = 0x812F;
 
         glTexParameteri(
-            GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, clampToEdge);
+            GL_TEXTURE_2D,
+            GL_TEXTURE_WRAP_S,
+            clampToEdge);
+
         glTexParameteri(
-            GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, clampToEdge);
+            GL_TEXTURE_2D,
+            GL_TEXTURE_WRAP_T,
+            clampToEdge);
 
         glTexImage2D(
             GL_TEXTURE_2D,
@@ -360,8 +430,10 @@ private:
             if (newTexture != 0)
                 glDeleteTextures(1, &newTexture);
 
-            std::cerr << "Could not upload stage texture: "
+            std::cerr
+                << "Could not upload stage texture: "
                 << path << '\n';
+
             return false;
         }
 
@@ -372,22 +444,34 @@ private:
         imageHeight = height;
 
         std::cout << "Stage loaded: " << path << '\n';
+
         return true;
     }
 
     static void Fill(const Rect& rect)
     {
         glBegin(GL_QUADS);
+
         glVertex2f(rect.x, rect.y);
         glVertex2f(rect.x + rect.width, rect.y);
-        glVertex2f(rect.x + rect.width, rect.y + rect.height);
+
+        glVertex2f(
+            rect.x + rect.width,
+            rect.y + rect.height);
+
         glVertex2f(rect.x, rect.y + rect.height);
+
         glEnd();
     }
 
     static void Outline(const Rect& rect, float thickness)
     {
-        Fill({ rect.x, rect.y, rect.width, thickness });
+        Fill({
+            rect.x,
+            rect.y,
+            rect.width,
+            thickness
+            });
 
         Fill({
             rect.x,
@@ -396,7 +480,12 @@ private:
             thickness
             });
 
-        Fill({ rect.x, rect.y, thickness, rect.height });
+        Fill({
+            rect.x,
+            rect.y,
+            thickness,
+            rect.height
+            });
 
         Fill({
             rect.x + rect.width - thickness,
@@ -421,16 +510,22 @@ private:
         const char* label,
         TextRenderer drawText) const
     {
-        const bool hovered = rect.Contains(cursorX, cursorY);
+        const bool selected =
+            &rect == &continueButton ?
+            selectedPauseButton == 0 :
+            selectedPauseButton == 1;
 
-        if (hovered)
+        const bool highlighted =
+            rect.Contains(cursorX, cursorY) || selected;
+
+        if (highlighted)
             glColor4f(0.40f, 0.15f, 0.10f, 0.98f);
         else
             glColor4f(0.10f, 0.04f, 0.03f, 0.96f);
 
         Fill(rect);
 
-        if (hovered)
+        if (highlighted)
             glColor3f(1.0f, 0.82f, 0.46f);
         else
             glColor3f(0.70f, 0.42f, 0.27f);
@@ -441,9 +536,13 @@ private:
 
         drawText(
             label,
-            rect.x + (rect.width - LabelWidth(label, textSize)) * 0.5f,
-            rect.y + (rect.height - 7.0f * textSize) * 0.5f,
+            rect.x +
+            (rect.width - LabelWidth(label, textSize)) * 0.5f,
+            rect.y +
+            (rect.height - 7.0f * textSize) * 0.5f,
             textSize,
-            1.0f, 1.0f, 1.0f);
+            1.0f,
+            1.0f,
+            1.0f);
     }
 };

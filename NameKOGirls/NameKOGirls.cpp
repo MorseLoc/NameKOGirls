@@ -47,7 +47,6 @@ struct ProgramState
 {
     WindowState window;
     AppState app;
-    FightArena fightArena;
 };
 
 struct Button
@@ -589,7 +588,10 @@ int main()
                     << '\n';
 
                 if (app.fightArena.Enter(
-                    std::string(NAMEKO_ASSET_DIR) + "/Stages"))
+                    std::string(NAMEKO_ASSET_DIR) + "/Stages",
+                    window,
+                    player1.isNPC,
+                    player2.isNPC))
                 {
                     app.screen = Screen::Fight;
                 }

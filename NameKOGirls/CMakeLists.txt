@@ -4,6 +4,12 @@
     "CharacterSelectScreen.h"
     "FightArena.h"
     "Character.h"
+    "CombatRules.h"
+    "CombatSimulation.h"
+    "CombatInput.h"
+    "CombatDraw.h"
+    "FightMatch.h"
+
 )
 
 target_link_libraries(NameKOGirls PRIVATE
